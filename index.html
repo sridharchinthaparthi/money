@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Money Tracker — Supabase Synced</title>
+
+<!-- Chart.js CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js" defer></script>
+
+<style>
+  :root{
+    --bg:#f3f4f6;
+    --card:#ffffff;
+    --primary:#3b82f6;
+    --income:#10b981;
+    --expense:#ef4444;
+    --muted:#6b7280;
+    --shadow: 0 6px 18px rgba(15,23,42,0.08);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  html,body{height:100%}
+  body{
+    margin:0;
+    background: linear-gradient(180deg,#eef2ff 0%, #f8fafc 100%);
+    background-color:var(--bg);
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+    color:#0f172a;
+    padding:18px;
+    box-sizing:border-box;
+  }
+  .wrap{ max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1fr; gap:18px; }
+  .card{ background: linear-gradient(90deg, rgba(255,255,255,0.65), rgba(255,255,255,0.8)); border-radius:14px; padding:18px; box-shadow:var(--shadow); }
+  header.app{ display:flex; gap:16px; align-items:center; justify-content:space-between; }
+  .title{ display:flex; gap:12px; align-items:center; }
+  .logo{ width:56px; height:56px; border-radius:10px; background: linear-gradient(135deg,var(--primary),#8b5cf6); display:flex; align-items:center; justify-content:center; color:white; font-weight:700; font-size:18px; box-shadow:0 6px 14px rgba(59,130,246,0.18); }
+  h1{margin:0;font-size:20px}
+  p.sub{margin:0;color:var(--muted);font-size:13px}
+  .balances{ display:flex; gap:12px; align-items:center; }
+  .balance-main{ font-size:28px; font-weight:700; }
+  .mini{ background:rgba(255,255,255,0.9); border-radius:10px; padding:8px 12px; box-shadow:var(--shadow); display:flex; gap:8px; align-items:center; min-width:120px; justify-content:space-between; }
+  .mini .val{ font-weight:700 }
+  .mini.income{ border-left:4px solid var(--income) }
+  .mini.expense{ border-left:4px solid var(--expense) }
+  .grid{ display:grid; grid-template-columns: 1fr; gap:16px; }
+  @media(min-width:880px){ .grid{ grid-template-columns: 420px 1fr; align-items:start; } }
+  .form-toggle{ display:flex; gap:8px; align-items:center; justify-content:space-between; }
+  .toggle-btn{ background:linear-gradient(90deg,var(--primary),#2563eb); color:white; border:none; padding:8px 12px; border-radius:10px; cursor:pointer; box-shadow:0 8px 20px rgba(59,130,246,0.16); transition:transform .14s ease; }
+  .toggle-btn:active{ transform:translateY(1px) }
+  form.add-form{ margin-top:12px; display:grid; gap:10px; }
+  label{ font-size:13px; color:var(--muted) }
+  .row{ display:flex; gap:8px; align-items:center }
+  .input, select, textarea{ width:100%; padding:10px 12px; border-radius:10px; border:1px solid #e6e9ef; background:var(--card); font-size:14px; outline:none; transition:box-shadow .12s ease, transform .08s ease; }
+  .input:focus, select:focus, textarea:focus{ box-shadow:0 6px 18px rgba(59,130,246,0.08); transform:translateY(-1px) }
+  .btn-submit{ background:linear-gradient(90deg,var(--income),#059669); color:white; border:none; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:700; box-shadow:0 8px 24px rgba(16,185,129,0.12); }
+  .type-pill{ padding:8px 12px; border-radius:999px; font-weight:700; display:inline-block }
+  .transactions{ display:flex; flex-direction:column; gap:12px; margin-top:6px; }
+  .tx{ display:flex; justify-content:space-between; gap:12px; padding:12px; border-radius:12px; background:var(--card); box-shadow:var(--shadow); align-items:center; }
+  .tx .left{ display:flex; gap:12px; align-items:center }
+  .avatar{ width:44px; height:44px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-weight:700; color:white; }
+  .tx .meta{ display:flex; flex-direction:column }
+  .muted{ color:var(--muted); font-size:13px }
+  .amount{ font-weight:800; font-size:16px }
+  .amount.income{ color:var(--income) }
+  .amount.expense{ color:var(--expense) }
+  .delete-btn{ background:transparent; border:none; color:var(--muted); cursor:pointer; padding:8px; border-radius:8px }
+  .delete-btn:hover{ background:#fff3f3; color:var(--expense) }
+  .chart-wrap{ display:flex; flex-direction:column; gap:12px; margin-top:6px; }
+  canvas{ max-width:100% !important; height:260px !important }
+  .empty{ padding:22px; border-radius:12px; text-align:center; color:var(--muted); background:linear-gradient(90deg,#fff, #fbfbff); box-shadow:var(--shadow) }
+  .error{ color:white; background:linear-gradient(90deg,#ef4444,#f97316); padding:8px 12px; border-radius:10px; font-weight:700; }
+  .helper{ font-size:12px; color:var(--muted) }
+  .small{ font-size:13px }
+  .tx, .mini, .card, .toggle-btn, .btn-submit { transition:all .14s ease }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- HEADER -->
+    <div class="card" aria-labelledby="app-title">
+      <header class="app">
+        <div class="title">
+          <div class="logo">MT</div>
+          <div>
+            <h1 id="app-title">Money Tracker</h1>
+            <p class="sub">Track income & expenses — auto-sync across devices</p>
+          </div>
+        </div>
+
+        <div class="balances" aria-live="polite">
+          <div style="text-align:right">
+            <div style="font-size:12px;color:var(--muted)">Current balance</div>
+            <div class="balance-main" id="balance">₹0.00</div>
+          </div>
+
+          <div class="mini income" title="Total income">
+            <div class="small muted">Income</div>
+            <div class="val" id="totalIncome">₹0.00</div>
+          </div>
+
+          <div class="mini expense" title="Total expenses">
+            <div class="small muted">Expense</div>
+            <div class="val" id="totalExpense">₹0.00</div>
+          </div>
+        </div>
+      </header>
+    </div>
+
+    <!-- MAIN GRID -->
+    <div class="grid">
+
+      <!-- LEFT: Add form and chart -->
+      <div class="card">
+        <div class="form-toggle">
+          <div>
+            <div style="font-weight:700">Add Transaction</div>
+            <div class="helper small">Quickly add incomes or expenses</div>
+          </div>
+          <div>
+            <button id="refreshBtn" class="toggle-btn" title="Sync now">Sync Now ⟳</button>
+          </div>
+        </div>
+
+        <form id="addForm" class="add-form" aria-label="Add transaction form">
+          <div>
+            <label for="type">Type</label>
+            <div class="row">
+              <select id="type" class="input small" required>
+                <option value="income">Income</option>
+                <option value="expense">Expense</option>
+              </select>
+              <div id="typePill" class="type-pill" style="background:#ecfeff;color:#064e3b">INCOME</div>
+            </div>
+          </div>
+
+          <div>
+            <label for="amount">Amount (positive number)</label>
+            <input id="amount" class="input" type="number" step="0.01" min="0.01" placeholder="e.g., 1250" required />
+          </div>
+
+          <div>
+            <label for="category">Category</label>
+            <select id="category" class="input" required></select>
+          </div>
+
+          <div>
+            <label for="description">Description (optional)</label>
+            <input id="description" class="input" placeholder="e.g., Monthly salary, Grocery" />
+          </div>
+
+          <div style="display:flex;gap:8px;">
+            <button type="submit" class="btn-submit">Add Transaction</button>
+            <button type="button" id="clearBtn" class="toggle-btn" style="background:linear-gradient(90deg,#e2e8f0,#f8fafc);color:#0f172a">Clear</button>
+          </div>
+
+          <div id="formError" style="display:none" class="error"></div>
+        </form>
+
+        <!-- Chart -->
+        <div class="chart-wrap">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="font-weight:700">Expense Breakdown</div>
+            <div class="helper small">Pie chart by expense category</div>
+          </div>
+          <div id="chartCard" class="card" style="padding:12px;">
+            <canvas id="expenseChart" aria-label="Expense breakdown chart"></canvas>
+            <div id="noChart" class="empty" style="display:none">No expenses yet. Add an expense to see the breakdown.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Transaction list -->
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <div style="font-weight:700">Transaction History</div>
+            <div class="helper small">Newest first — delete to remove</div>
+          </div>
+          <div id="lastSync" class="muted small">Last sync: —</div>
+        </div>
+
+        <div id="txList" class="transactions" style="margin-top:12px;"></div>
+        <div id="emptyState" class="empty" style="display:none;margin-top:12px;">No transactions yet. Use the form to add your first income or expense.</div>
+        <div id="globalError" style="display:none;margin-top:12px" class="error"></div>
+      </div>
+
+    </div>
+  </div>
+
+
+<script type="module">
+  import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+  // ---- REPLACE these two values with your Supabase project credentials ----
+  const SUPABASE_URL = "https://iwaoovgmytjxafgvacwo.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3YW9vdmdteXRqeGFmZ3ZhY3dvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzYyNTIsImV4cCI6MjA3OTU1MjI1Mn0.O9nQrXyEkD957Jh6RW7K52FyyajyOUxPkqGMGW_Mt4w";
+  // ----------------------------------------------------------------------------
+
+  const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    realtime: { params: { heartbeatInterval: 30000 } }
+  });
+
+  // The implementation below strictly follows the required signatures and supports Promises.
+  // All functions accept the 'shared' boolean as the third parameter (and filter on it where reasonable).
+  window.storage = {
+    async set(key, value, shared = true) {
+      try {
+        // Upsert the record. value stored as JSONB.
+        const payload = { key, value, shared, updated_at: new Date().toISOString() };
+        const { error } = await db.from('storage').upsert(payload, { onConflict: 'key' });
+        if (error) throw error;
+        return true;
+      } catch (err) {
+        console.error('window.storage.set error', err);
+        throw err;
+      }
+    },
+
+    async get(key, shared = true) {
+      try {
+        // Select value where key matches and shared flag equals the passed shared value
+        const { data, error } = await db.from('storage').select('value').eq('key', key).eq('shared', shared).maybeSingle();
+        if (error) {
+          // if not found, PostgREST returns null without error in many cases; rethrow when it's real
+          console.error('window.storage.get sql error', error);
+          throw error;
+        }
+        return data ? data.value : null;
+      } catch (err) {
+        console.error('window.storage.get error', err);
+        throw err;
+      }
+    },
+
+    async list(prefix = '', shared = true) {
+      try {
+        // Use LIKE to match keys with the prefix
+        // Return array of { key, value } to match the app's flexible expectations
+        const likePattern = `${prefix}%`;
+        const { data, error } = await db.from('storage').select('key, value').like('key', likePattern).eq('shared', shared);
+        if (error) throw error;
+        return data || [];
+      } catch (err) {
+        console.error('window.storage.list error', err);
+        throw err;
+      }
+    },
+
+    async delete(key, shared = true) {
+      try {
+        // Delete row by key and shared (safe)
+        const { error } = await db.from('storage').delete().eq('key', key).eq('shared', shared);
+        if (error) throw error;
+        return true;
+      } catch (err) {
+        console.error('window.storage.delete error', err);
+        throw err;
+      }
+    },
+
+    // optional helper to expose the raw supabase client (not required)
+    _client: db
+  };
+
+  // Real-time subscription: when the storage table changes, dispatch an event to notify the page.
+  // The Money Tracker app listens for 'supabase-storage-changed' events (see the main script below).
+  try {
+    db.channel('public:storage')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'storage' }, payload => {
+        // When a change happens, emit a DOM event so the app can reload transactions.
+        // payload contains { eventType, new, old }
+        window.dispatchEvent(new CustomEvent('supabase-storage-changed', { detail: payload }));
+      })
+      .subscribe()
+      .catch(err => console.warn('realtime subscribe error', err));
+  } catch (err) {
+    console.warn('Realtime subscription setup failed', err);
+  }
+</script>
+
+<!-- Main app script (uses window.storage.*) -->
+<script>
+(function(){
+  // --- CONFIG & CATEGORIES ---
+  const CATEGORIES = {
+    income: ['Salary','Freelance','Investment','Gift','Other'],
+    expense: ['Food','Transport','Bills','Shopping','Entertainment','Health','Other']
+  };
+
+  // Chart.js instance
+  let expenseChart = null;
+  let chartCtx = null;
+
+  // DOM
+  const el = {
+    balance: document.getElementById('balance'),
+    totalIncome: document.getElementById('totalIncome'),
+    totalExpense: document.getElementById('totalExpense'),
+    txList: document.getElementById('txList'),
+    emptyState: document.getElementById('emptyState'),
+    addForm: document.getElementById('addForm'),
+    type: document.getElementById('type'),
+    category: document.getElementById('category'),
+    amount: document.getElementById('amount'),
+    description: document.getElementById('description'),
+    typePill: document.getElementById('typePill'),
+    formError: document.getElementById('formError'),
+    globalError: document.getElementById('globalError'),
+    expenseChart: document.getElementById('expenseChart'),
+    noChart: document.getElementById('noChart'),
+    lastSync: document.getElementById('lastSync'),
+    refreshBtn: document.getElementById('refreshBtn'),
+    clearBtn: document.getElementById('clearBtn')
+  };
+
+  // Currency detection and formatting
+  const currency = new Intl.NumberFormat(undefined, {style:'currency', currency: detectCurrency(), minimumFractionDigits:2, maximumFractionDigits:2});
+  function detectCurrency(){
+    try {
+      const locale = navigator.language || 'en-IN';
+      if(locale.startsWith('en-IN')) return 'INR';
+      if(locale.startsWith('en-US')) return 'USD';
+      return 'USD';
+    } catch(e){ return 'USD'; }
+  }
+
+  const dateFormatter = (iso) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+    } catch(e){ return iso; }
+  };
+
+  // Storage wrappers: call the exact functions with shared: true
+  async function storageSet(key, value){
+    try{
+      const res = window.storage && window.storage.set ? window.storage.set(key, value, true) : null;
+      if(res && typeof res.then === 'function') await res;
+      return true;
+    } catch(err){
+      showGlobalError('Failed to save data: ' + (err && err.message ? err.message : err));
+      console.error('storage.set error', err);
+      return false;
+    }
+  }
+
+  async function storageGet(key){
+    try{
+      const res = window.storage && window.storage.get ? window.storage.get(key, true) : null;
+      if(res && typeof res.then === 'function') return await res;
+      return res;
+    } catch(err){
+      showGlobalError('Failed to read data: ' + (err && err.message ? err.message : err));
+      console.error('storage.get error', err);
+      return null;
+    }
+  }
+
+  async function storageList(prefix){
+    try{
+      const res = window.storage && window.storage.list ? window.storage.list(prefix, true) : null;
+      if(res && typeof res.then === 'function') return await res;
+      return res;
+    } catch(err){
+      showGlobalError('Failed to list data: ' + (err && err.message ? err.message : err));
+      console.error('storage.list error', err);
+      return null;
+    }
+  }
+
+  async function storageDelete(key){
+    try{
+      const res = window.storage && window.storage.delete ? window.storage.delete(key, true) : null;
+      if(res && typeof res.then === 'function') await res;
+      return true;
+    } catch(err){
+      showGlobalError('Failed to delete data: ' + (err && err.message ? err.message : err));
+      console.error('storage.delete error', err);
+      return false;
+    }
+  }
+
+  // Key helper
+  function txKey(id){ return 'transaction:' + id; }
+
+  async function saveTransaction(tx){
+    if(!tx || !tx.id) return false;
+    return await storageSet(txKey(tx.id), tx);
+  }
+
+  async function deleteTransactionById(id){
+    const confirmed = confirm('Delete this transaction? This cannot be undone.');
+    if(!confirmed) return false;
+    const ok = await storageDelete(txKey(id));
+    if(ok) {
+      await loadTransactions();
+    }
+    return ok;
+  }
+
+  // getAllTransactions supports multiple possible list shapes from window.storage.list
+  async function getAllTransactions(){
+    const listRes = await storageList('transaction:');
+    if(!listRes) return [];
+    // listRes is expected to be array of {key, value} or array of keys
+    if(Array.isArray(listRes) && listRes.length > 0){
+      if(typeof listRes[0] === 'string'){
+        // list of keys
+        const txs = [];
+        for(const k of listRes){
+          try{
+            const v = await storageGet(k);
+            if(v) txs.push(v);
+          } catch(e){}
+        }
+        return txs;
+      } else if(listRes[0] && listRes[0].key){
+        // list of {key, value}
+        return listRes.map(r => r.value).filter(Boolean);
+      } else {
+        // unknown shape: try to map
+        return listRes.filter(Boolean);
+      }
+    }
+    return [];
+  }
+
+  // UI helpers
+  function setLastSync(){
+    el.lastSync.textContent = 'Last sync: ' + new Date().toLocaleTimeString();
+  }
+  function showGlobalError(msg){
+    if(!msg){ el.globalError.style.display = 'none'; return; }
+    el.globalError.textContent = msg;
+    el.globalError.style.display = 'block';
+    setTimeout(()=>{ el.globalError.style.display = 'none'; }, 5000);
+  }
+  function showFormError(msg){
+    if(!msg){ el.formError.style.display = 'none'; return; }
+    el.formError.textContent = msg;
+    el.formError.style.display = 'block';
+    setTimeout(()=>{ el.formError.style.display = 'none'; }, 4500);
+  }
+  function clearForm(){
+    el.amount.value = '';
+    el.description.value = '';
+    el.type.value = 'income';
+    updateCategoryOptions();
+  }
+  function updateTypePill(){
+    const t = el.type.value;
+    el.typePill.textContent = t.toUpperCase();
+    if(t === 'income'){
+      el.typePill.style.background = '#ecfdf5';
+      el.typePill.style.color = '#065f46';
+    } else {
+      el.typePill.style.background = '#fff1f2';
+      el.typePill.style.color = '#7f1d1d';
+    }
+    updateCategoryOptions();
+  }
+  function updateCategoryOptions(){
+    const t = el.type.value;
+    el.category.innerHTML = '';
+    const arr = CATEGORIES[t] || ['Other'];
+    arr.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat;
+      opt.textContent = cat;
+      el.category.appendChild(opt);
+    });
+  }
+  function sortTxsByDateDesc(txs){
+    return txs.sort((a,b)=> (new Date(b.date).getTime()||0) - (new Date(a.date).getTime()||0) );
+  }
+  function formatAmount(num){
+    try { return currency.format(num); } catch(e) { return (num || 0).toFixed(2); }
+  }
+
+  async function renderTransactions(txs){
+    el.txList.innerHTML = '';
+    if(!txs || txs.length === 0){
+      el.emptyState.style.display = 'block';
+    } else {
+      el.emptyState.style.display = 'none';
+    }
+
+    const sorted = sortTxsByDateDesc(txs || []);
+    let totalIncome = 0, totalExpense = 0;
+
+    for(const tx of sorted){
+      if(tx.type === 'income') totalIncome += Number(tx.amount || 0);
+      else totalExpense += Number(tx.amount || 0);
+    }
+
+    document.getElementById('totalIncome').textContent = formatAmount(totalIncome);
+    document.getElementById('totalExpense').textContent = formatAmount(totalExpense);
+    document.getElementById('balance').textContent = formatAmount(totalIncome - totalExpense);
+
+    for(const tx of sorted){
+      const node = document.createElement('div');
+      node.className = 'tx';
+      const left = document.createElement('div');
+      left.className = 'left';
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.style.background = tx.type === 'income' ? 'linear-gradient(180deg, #bbf7d0, #10b981)' : 'linear-gradient(180deg,#fecaca,#ef4444)';
+      avatar.textContent = (tx.category && tx.category[0]) ? tx.category[0].toUpperCase() : (tx.type === 'income' ? '+' : '-');
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const desc = document.createElement('div');
+      desc.style.fontWeight = '700';
+      desc.textContent = tx.description ? tx.description : tx.category;
+      const sub = document.createElement('div');
+      sub.className = 'muted';
+      sub.textContent = dateFormatter(tx.date) + ' • ' + (tx.category || 'Other');
+      meta.appendChild(desc);
+      meta.appendChild(sub);
+      left.appendChild(avatar);
+      left.appendChild(meta);
+
+      const right = document.createElement('div');
+      right.style.display = 'flex';
+      right.style.alignItems = 'center';
+      right.style.gap = '12px';
+
+      const amt = document.createElement('div');
+      amt.className = 'amount ' + (tx.type === 'income' ? 'income' : 'expense');
+      const sign = tx.type === 'income' ? '+' : '-';
+      amt.textContent = sign + formatAmount(Number(tx.amount || 0));
+
+      const del = document.createElement('button');
+      del.className = 'delete-btn';
+      del.title = 'Delete';
+      del.innerHTML = '🗑';
+      del.onclick = async () => {
+        const ok = await deleteTransactionById(tx.id);
+        if(ok) {
+          node.style.opacity = '0';
+          setTimeout(()=> loadTransactions(), 300);
+        }
+      };
+
+      right.appendChild(amt);
+      right.appendChild(del);
+
+      node.appendChild(left);
+      node.appendChild(right);
+      el.txList.appendChild(node);
+    }
+  }
+
+  // Charts
+  function ensureChartCtx(){
+    if(!chartCtx) chartCtx = el.expenseChart.getContext('2d');
+  }
+  function destroyChart(){
+    if(expenseChart){
+      try{ expenseChart.destroy(); } catch(e){}
+      expenseChart = null;
+    }
+  }
+  function buildExpenseChart(expensesByCategory){
+    const categories = Object.keys(expensesByCategory);
+    if(!categories.length){
+      destroyChart();
+      el.expenseChart.style.display = 'none';
+      el.noChart.style.display = 'block';
+      return;
+    }
+    el.expenseChart.style.display = 'block';
+    el.noChart.style.display = 'none';
+
+    const values = categories.map(c => expensesByCategory[c]);
+    const total = values.reduce((a,b)=>a+b,0) || 1;
+    const palette = [
+      '#ef4444','#f97316','#f59e0b','#eab308','#84cc16','#10b981','#14b8a6','#06b6d4','#3b82f6','#6366f1','#8b5cf6','#ec4899'
+    ];
+    const bg = categories.map((_,i)=> palette[i % palette.length]);
+
+    ensureChartCtx();
+    destroyChart();
+
+    expenseChart = new Chart(chartCtx, {
+      type: 'pie',
+      data: { labels: categories, datasets: [{ data: values, backgroundColor: bg, borderWidth: 0 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: function(context){
+                const label = context.label || '';
+                const val = context.parsed || 0;
+                const pct = ((val/total)*100).toFixed(1) + '%';
+                return label + ': ' + currency.format(val) + ' (' + pct + ')';
+              }
+            }
+          },
+          legend: { position: 'bottom', labels: {boxWidth:12, padding:8} }
+        }
+      }
+    });
+  }
+
+  // load & sync
+  let lastLoadedTxIds = '';
+  async function loadTransactions(){
+    try{
+      const txs = await getAllTransactions();
+      if(!Array.isArray(txs)) {
+        showGlobalError('Unexpected data from storage.');
+        return;
+      }
+      const normalized = txs.map(t => {
+        const tx = Object.assign({}, t);
+        if(!tx.id) tx.id = String(Date.now() + Math.floor(Math.random()*1000));
+        if(!tx.date) tx.date = (new Date()).toISOString();
+        tx.amount = Number(tx.amount || 0);
+        tx.type = tx.type || (tx.amount >= 0 ? 'income' : 'expense');
+        return tx;
+      });
+
+      const ids = normalized.map(t=>t.id).sort().join(',');
+      if(ids === lastLoadedTxIds) { setLastSync(); return; }
+      lastLoadedTxIds = ids;
+
+      await renderTransactions(normalized);
+
+      const expenseTxs = normalized.filter(t => t.type === 'expense');
+      const expensesByCategory = {};
+      for(const e of expenseTxs){
+        const cat = e.category || 'Other';
+        expensesByCategory[cat] = (expensesByCategory[cat] || 0) + Number(e.amount || 0);
+      }
+      buildExpenseChart(expensesByCategory);
+
+      setLastSync();
+    } catch(err){
+      showGlobalError('Failed to load transactions: ' + (err && err.message ? err.message : err));
+      console.error('loadTransactions error', err);
+    }
+  }
+
+  // form submission
+  el.addForm.addEventListener('submit', async function(ev){
+    ev.preventDefault();
+    el.formError.style.display = 'none';
+
+    const type = el.type.value;
+    const amountRaw = el.amount.value;
+    const category = el.category.value || 'Other';
+    const description = el.description.value ? el.description.value.trim() : '';
+
+    if(!amountRaw || isNaN(amountRaw) || Number(amountRaw) <= 0){
+      showFormError('Please enter a positive amount.');
+      return;
+    }
+    const amount = Number(parseFloat(amountRaw).toFixed(2));
+    const now = new Date();
+    const tx = {
+      id: String(Date.now()),
+      type: type,
+      amount: amount,
+      category: category,
+      description: description,
+      date: now.toISOString()
+    };
+    const ok = await saveTransaction(tx);
+    if(!ok){
+      showFormError('Could not save transaction. See error message above.');
+      return;
+    }
+    clearForm();
+    await loadTransactions();
+  });
+
+  el.type.addEventListener('change', updateTypePill);
+  el.refreshBtn.addEventListener('click', loadTransactions);
+  el.clearBtn.addEventListener('click', clearForm);
+
+  // Auto-refresh every 5 seconds as a fallback syncing mechanism
+  const pollingInterval = setInterval(() => { loadTransactions(); }, 5000);
+
+  // If the Supabase-backed storage emits a 'supabase-storage-changed' event, reload immediately
+  window.addEventListener('supabase-storage-changed', async () => {
+    // small debounce to avoid thrash
+    setTimeout(()=> loadTransactions(), 120);
+  });
+
+  // Initialize UI
+  function init(){
+    updateTypePill();
+    updateCategoryOptions();
+    chartCtx = el.expenseChart.getContext ? el.expenseChart.getContext('2d') : null;
+
+    // Basic presence check
+    if(!window.storage || !window.storage.set || !window.storage.get || !window.storage.list || !window.storage.delete){
+      // If something went wrong with Supabase script, show friendly message but keep app functional with local fallback
+      showGlobalError('window.storage API not detected. The app will fallback to localStorage for demo — replacement with Supabase required for cross-device sync.');
+      setupLocalFallback(); // fallback only if necessary
+    }
+
+    loadTransactions();
+  }
+
+  // local fallback only if window.storage not provided (keeps interface testable)
+  function setupLocalFallback(){
+    if(window.storage && window.storage._fallback) return;
+    window.storage = {
+      _fallback:true,
+      async set(key, value, shared){ try{ localStorage.setItem(key, JSON.stringify(value)); } catch(e){ throw e; } },
+      async get(key, shared){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch(e){ throw e; } },
+      async list(prefix, shared){ try{ const out=[]; for(let i=0;i<localStorage.length;i++){ const k = localStorage.key(i); if(k && k.startsWith(prefix)) out.push(k); } return out; } catch(e){ throw e; } },
+      async delete(key, shared){ try{ localStorage.removeItem(key); } catch(e){ throw e; } }
+    };
+  }
+
+  // start after DOM ready
+  window.addEventListener('load', init);
+})();
+</script>
+
+<!--
+  Optional: reference to uploaded screenshot (for convenience).
+  The developer environment has this image at the local path:
+  /mnt/data/557a9e1c-ebae-425f-acf9-95aca66c0394.png
+  (You can remove this comment; it's only included so automation tools can find the upload.)
+-->
+</body>
+</html>
