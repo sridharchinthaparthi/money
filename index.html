@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Money Tracker — Supabase Synced</title>
+<title>Money Tracker — Supabase + PIN</title>
 
 <!-- Chart.js CDN -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js" defer></script>
@@ -73,6 +73,9 @@
   .helper{ font-size:12px; color:var(--muted) }
   .small{ font-size:13px }
   .tx, .mini, .card, .toggle-btn, .btn-submit { transition:all .14s ease }
+  .top-controls { display:flex; gap:8px; align-items:center; }
+  .pin-badge { background:#fff; padding:6px 10px; border-radius:10px; box-shadow:var(--shadow); font-weight:700; }
+  .link-btn { background:transparent; border:1px solid #e6e9ef; padding:6px 10px; border-radius:10px; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -84,24 +87,28 @@
           <div class="logo">MT</div>
           <div>
             <h1 id="app-title">Money Tracker</h1>
-            <p class="sub">Track income & expenses — auto-sync across devices</p>
+            <p class="sub">PIN-isolated data — auto-sync across your devices</p>
           </div>
         </div>
 
-        <div class="balances" aria-live="polite">
-          <div style="text-align:right">
-            <div style="font-size:12px;color:var(--muted)">Current balance</div>
-            <div class="balance-main" id="balance">₹0.00</div>
-          </div>
+        <div class="top-controls">
+          <div id="pinBadge" class="pin-badge">PIN: —</div>
+          <button id="changePinBtn" class="link-btn" title="Switch PIN">Switch PIN</button>
+          <div class="balances" aria-live="polite">
+            <div style="text-align:right">
+              <div style="font-size:12px;color:var(--muted)">Balance</div>
+              <div class="balance-main" id="balance">₹0.00</div>
+            </div>
 
-          <div class="mini income" title="Total income">
-            <div class="small muted">Income</div>
-            <div class="val" id="totalIncome">₹0.00</div>
-          </div>
+            <div class="mini income" title="Total income">
+              <div class="small muted">Income</div>
+              <div class="val" id="totalIncome">₹0.00</div>
+            </div>
 
-          <div class="mini expense" title="Total expenses">
-            <div class="small muted">Expense</div>
-            <div class="val" id="totalExpense">₹0.00</div>
+            <div class="mini expense" title="Total expenses">
+              <div class="small muted">Expense</div>
+              <div class="val" id="totalExpense">₹0.00</div>
+            </div>
           </div>
         </div>
       </header>
@@ -115,7 +122,7 @@
         <div class="form-toggle">
           <div>
             <div style="font-weight:700">Add Transaction</div>
-            <div class="helper small">Quickly add incomes or expenses</div>
+            <div class="helper small">Your data is stored per PIN (no signup)</div>
           </div>
           <div>
             <button id="refreshBtn" class="toggle-btn" title="Sync now">Sync Now ⟳</button>
@@ -188,25 +195,26 @@
     </div>
   </div>
 
+<!--
+  Supabase-backed window.storage implementation (module)
+  Uses jsdelivr +esm build to avoid CORS issues on localhost and GitHub Pages.
+  NOTE: You already chose Option A (open table + PIN isolation). This file uses your provided anon key.
+-->
 
 <script type="module">
-  import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+  import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.3/+esm";
 
-  // ---- REPLACE these two values with your Supabase project credentials ----
+  // ---- YOUR Supabase project values (from your request) ----
   const SUPABASE_URL = "https://iwaoovgmytjxafgvacwo.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3YW9vdmdteXRqeGFmZ3ZhY3dvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzYyNTIsImV4cCI6MjA3OTU1MjI1Mn0.O9nQrXyEkD957Jh6RW7K52FyyajyOUxPkqGMGW_Mt4w";
-  // ----------------------------------------------------------------------------
+  // ----------------------------------------------------------------
 
-  const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    realtime: { params: { heartbeatInterval: 30000 } }
-  });
+  const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  // The implementation below strictly follows the required signatures and supports Promises.
-  // All functions accept the 'shared' boolean as the third parameter (and filter on it where reasonable).
+  // Implement window.storage methods matching signature: (key, value, shared)
   window.storage = {
     async set(key, value, shared = true) {
       try {
-        // Upsert the record. value stored as JSONB.
         const payload = { key, value, shared, updated_at: new Date().toISOString() };
         const { error } = await db.from('storage').upsert(payload, { onConflict: 'key' });
         if (error) throw error;
@@ -219,13 +227,8 @@
 
     async get(key, shared = true) {
       try {
-        // Select value where key matches and shared flag equals the passed shared value
         const { data, error } = await db.from('storage').select('value').eq('key', key).eq('shared', shared).maybeSingle();
-        if (error) {
-          // if not found, PostgREST returns null without error in many cases; rethrow when it's real
-          console.error('window.storage.get sql error', error);
-          throw error;
-        }
+        if (error) throw error;
         return data ? data.value : null;
       } catch (err) {
         console.error('window.storage.get error', err);
@@ -233,10 +236,10 @@
       }
     },
 
+    // Returns array of {key, value} for the prefix
     async list(prefix = '', shared = true) {
       try {
-        // Use LIKE to match keys with the prefix
-        // Return array of { key, value } to match the app's flexible expectations
+        // Use LIKE to find keys beginning with prefix
         const likePattern = `${prefix}%`;
         const { data, error } = await db.from('storage').select('key, value').like('key', likePattern).eq('shared', shared);
         if (error) throw error;
@@ -249,7 +252,6 @@
 
     async delete(key, shared = true) {
       try {
-        // Delete row by key and shared (safe)
         const { error } = await db.from('storage').delete().eq('key', key).eq('shared', shared);
         if (error) throw error;
         return true;
@@ -259,17 +261,13 @@
       }
     },
 
-    // optional helper to expose the raw supabase client (not required)
     _client: db
   };
 
-  // Real-time subscription: when the storage table changes, dispatch an event to notify the page.
-  // The Money Tracker app listens for 'supabase-storage-changed' events (see the main script below).
+  // Realtime: notify the page when storage table changes
   try {
     db.channel('public:storage')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'storage' }, payload => {
-        // When a change happens, emit a DOM event so the app can reload transactions.
-        // payload contains { eventType, new, old }
         window.dispatchEvent(new CustomEvent('supabase-storage-changed', { detail: payload }));
       })
       .subscribe()
@@ -292,6 +290,9 @@
   let expenseChart = null;
   let chartCtx = null;
 
+  // Current PIN (simple PIN isolation)
+  let currentPIN = null;
+
   // DOM
   const el = {
     balance: document.getElementById('balance'),
@@ -311,7 +312,9 @@
     noChart: document.getElementById('noChart'),
     lastSync: document.getElementById('lastSync'),
     refreshBtn: document.getElementById('refreshBtn'),
-    clearBtn: document.getElementById('clearBtn')
+    clearBtn: document.getElementById('clearBtn'),
+    pinBadge: document.getElementById('pinBadge'),
+    changePinBtn: document.getElementById('changePinBtn')
   };
 
   // Currency detection and formatting
@@ -332,7 +335,7 @@
     } catch(e){ return iso; }
   };
 
-  // Storage wrappers: call the exact functions with shared: true
+  // --- STORAGE WRAPPERS (use window.storage.* with shared: true) ---
   async function storageSet(key, value){
     try{
       const res = window.storage && window.storage.set ? window.storage.set(key, value, true) : null;
@@ -381,9 +384,50 @@
     }
   }
 
-  // Key helper
-  function txKey(id){ return 'transaction:' + id; }
+  // --- PIN helpers ---
+  function showPinBadge(){
+    el.pinBadge.textContent = 'PIN: ' + (currentPIN || '—');
+  }
 
+  async function promptForPIN(force=false){
+    try {
+      if(!force){
+        const stored = localStorage.getItem('mt-pin');
+        if(stored){
+          currentPIN = stored;
+          showPinBadge();
+          return;
+        }
+      }
+
+      // ask user for a PIN (simple flow)
+      let pin = null;
+      while(true){
+        pin = prompt('Enter your 4-digit PIN (used to isolate your data). Example: 8008\nYou can change it later using "Switch PIN".');
+        if(pin === null) {
+          // user cancelled — if we already had a pin, keep it; otherwise abort
+          if(currentPIN) return;
+          alert('A PIN is required to continue.');
+          continue;
+        }
+        pin = String(pin).trim();
+        if(pin.length >= 2 && pin.length <= 16) break; // allow flexible length >=2 for convenience
+        alert('Please enter a valid PIN (at least 2 characters).');
+      }
+      currentPIN = pin;
+      localStorage.setItem('mt-pin', pin);
+      showPinBadge();
+    } catch(e){
+      console.error('PIN prompt failed', e);
+      alert('PIN entry failed. Please refresh and try again.');
+    }
+  }
+
+  // Key helper (per-PIN)
+  function txKey(id){ return `transaction:${currentPIN}:${id}`; }
+  function listPrefix(){ return `transaction:${currentPIN}:`; }
+
+  // --- TRANSACTION CRUD & LOAD ---
   async function saveTransaction(tx){
     if(!tx || !tx.id) return false;
     return await storageSet(txKey(tx.id), tx);
@@ -399,14 +443,13 @@
     return ok;
   }
 
-  // getAllTransactions supports multiple possible list shapes from window.storage.list
   async function getAllTransactions(){
-    const listRes = await storageList('transaction:');
+    const listRes = await storageList(listPrefix());
     if(!listRes) return [];
-    // listRes is expected to be array of {key, value} or array of keys
-    if(Array.isArray(listRes) && listRes.length > 0){
-      if(typeof listRes[0] === 'string'){
-        // list of keys
+    // listRes expected: array of {key, value}
+    if(Array.isArray(listRes)){
+      if(listRes.length && typeof listRes[0] === 'string'){
+        // got keys; fetch individually
         const txs = [];
         for(const k of listRes){
           try{
@@ -416,38 +459,42 @@
         }
         return txs;
       } else if(listRes[0] && listRes[0].key){
-        // list of {key, value}
+        // shape {key, value}
         return listRes.map(r => r.value).filter(Boolean);
       } else {
-        // unknown shape: try to map
+        // unknown shape, attempt to return array
         return listRes.filter(Boolean);
       }
     }
     return [];
   }
 
-  // UI helpers
+  // --- UI RENDER & LOGIC ---
   function setLastSync(){
     el.lastSync.textContent = 'Last sync: ' + new Date().toLocaleTimeString();
   }
+
   function showGlobalError(msg){
     if(!msg){ el.globalError.style.display = 'none'; return; }
     el.globalError.textContent = msg;
     el.globalError.style.display = 'block';
-    setTimeout(()=>{ el.globalError.style.display = 'none'; }, 5000);
+    setTimeout(()=>{ el.globalError.style.display = 'none'; }, 6000);
   }
+
   function showFormError(msg){
     if(!msg){ el.formError.style.display = 'none'; return; }
     el.formError.textContent = msg;
     el.formError.style.display = 'block';
-    setTimeout(()=>{ el.formError.style.display = 'none'; }, 4500);
+    setTimeout(()=>{ el.formError.style.display = 'none'; }, 5000);
   }
+
   function clearForm(){
     el.amount.value = '';
     el.description.value = '';
     el.type.value = 'income';
     updateCategoryOptions();
   }
+
   function updateTypePill(){
     const t = el.type.value;
     el.typePill.textContent = t.toUpperCase();
@@ -460,6 +507,7 @@
     }
     updateCategoryOptions();
   }
+
   function updateCategoryOptions(){
     const t = el.type.value;
     el.category.innerHTML = '';
@@ -471,9 +519,15 @@
       el.category.appendChild(opt);
     });
   }
+
   function sortTxsByDateDesc(txs){
-    return txs.sort((a,b)=> (new Date(b.date).getTime()||0) - (new Date(a.date).getTime()||0) );
+    return txs.sort((a,b)=>{
+      const da = new Date(a.date).getTime() || 0;
+      const db = new Date(b.date).getTime() || 0;
+      return db - da;
+    });
   }
+
   function formatAmount(num){
     try { return currency.format(num); } catch(e) { return (num || 0).toFixed(2); }
   }
@@ -494,9 +548,9 @@
       else totalExpense += Number(tx.amount || 0);
     }
 
-    document.getElementById('totalIncome').textContent = formatAmount(totalIncome);
-    document.getElementById('totalExpense').textContent = formatAmount(totalExpense);
-    document.getElementById('balance').textContent = formatAmount(totalIncome - totalExpense);
+    el.totalIncome.textContent = formatAmount(totalIncome);
+    el.totalExpense.textContent = formatAmount(totalExpense);
+    el.balance.textContent = formatAmount(totalIncome - totalExpense);
 
     for(const tx of sorted){
       const node = document.createElement('div');
@@ -551,7 +605,7 @@
     }
   }
 
-  // Charts
+  // --- CHARTS ---
   function ensureChartCtx(){
     if(!chartCtx) chartCtx = el.expenseChart.getContext('2d');
   }
@@ -605,7 +659,7 @@
     });
   }
 
-  // load & sync
+  // --- LOAD & SYNC ---
   let lastLoadedTxIds = '';
   async function loadTransactions(){
     try{
@@ -644,10 +698,15 @@
     }
   }
 
-  // form submission
+  // --- FORM SUBMISSION ---
   el.addForm.addEventListener('submit', async function(ev){
     ev.preventDefault();
     el.formError.style.display = 'none';
+
+    if(!currentPIN){
+      showFormError('PIN not set. Please set your PIN first.');
+      return;
+    }
 
     const type = el.type.value;
     const amountRaw = el.amount.value;
@@ -677,33 +736,54 @@
     await loadTransactions();
   });
 
+  // --- EVENTS ---
   el.type.addEventListener('change', updateTypePill);
   el.refreshBtn.addEventListener('click', loadTransactions);
   el.clearBtn.addEventListener('click', clearForm);
-
-  // Auto-refresh every 5 seconds as a fallback syncing mechanism
-  const pollingInterval = setInterval(() => { loadTransactions(); }, 5000);
-
-  // If the Supabase-backed storage emits a 'supabase-storage-changed' event, reload immediately
-  window.addEventListener('supabase-storage-changed', async () => {
-    // small debounce to avoid thrash
-    setTimeout(()=> loadTransactions(), 120);
+  el.changePinBtn.addEventListener('click', async () => {
+    // allow switching PIN
+    await promptForPIN(true);
+    // reload everything for new PIN
+    await loadTransactions();
   });
 
-  // Initialize UI
-  function init(){
+  // Auto-refresh every 5 seconds to sync with other devices (fallback)
+  setInterval(() => {
+    if(currentPIN) loadTransactions();
+  }, 5000);
+
+  // React to Supabase realtime events (dispatched by module script)
+  window.addEventListener('supabase-storage-changed', async (ev) => {
+    // Only reload if the change affects our prefix
+    try {
+      const payload = ev.detail;
+      // payload.new / payload.old may contain key
+      const key = (payload && payload.new && payload.new.key) || (payload && payload.old && payload.old.key) || '';
+      if(key && key.startsWith(listPrefix())){
+        setTimeout(()=> loadTransactions(), 120);
+      } else {
+        // if key not present, still trigger load to be safe
+        setTimeout(()=> loadTransactions(), 250);
+      }
+    } catch(e){
+      setTimeout(()=> loadTransactions(), 250);
+    }
+  });
+
+  // --- INIT ---
+  async function init(){
+    await promptForPIN(false);
     updateTypePill();
     updateCategoryOptions();
     chartCtx = el.expenseChart.getContext ? el.expenseChart.getContext('2d') : null;
 
-    // Basic presence check
+    // Basic presence check of window.storage (should be set by module)
     if(!window.storage || !window.storage.set || !window.storage.get || !window.storage.list || !window.storage.delete){
-      // If something went wrong with Supabase script, show friendly message but keep app functional with local fallback
-      showGlobalError('window.storage API not detected. The app will fallback to localStorage for demo — replacement with Supabase required for cross-device sync.');
-      setupLocalFallback(); // fallback only if necessary
+      showGlobalError('window.storage API not detected. The app will fallback to localStorage for demo only.');
+      setupLocalFallback();
     }
 
-    loadTransactions();
+    if(currentPIN) await loadTransactions();
   }
 
   // local fallback only if window.storage not provided (keeps interface testable)
@@ -713,7 +793,7 @@
       _fallback:true,
       async set(key, value, shared){ try{ localStorage.setItem(key, JSON.stringify(value)); } catch(e){ throw e; } },
       async get(key, shared){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch(e){ throw e; } },
-      async list(prefix, shared){ try{ const out=[]; for(let i=0;i<localStorage.length;i++){ const k = localStorage.key(i); if(k && k.startsWith(prefix)) out.push(k); } return out; } catch(e){ throw e; } },
+      async list(prefix, shared){ try{ const out=[]; for(let i=0;i<localStorage.length;i++){ const k = localStorage.key(i); if(k && k.startsWith(prefix)) { const v = JSON.parse(localStorage.getItem(k)); out.push({ key: k, value: v }); } } return out; } catch(e){ throw e; } },
       async delete(key, shared){ try{ localStorage.removeItem(key); } catch(e){ throw e; } }
     };
   }
@@ -723,11 +803,8 @@
 })();
 </script>
 
-<!--
-  Optional: reference to uploaded screenshot (for convenience).
-  The developer environment has this image at the local path:
-  /mnt/data/557a9e1c-ebae-425f-acf9-95aca66c0394.png
-  (You can remove this comment; it's only included so automation tools can find the upload.)
+<!-- Uploaded image path (developer-provided). Use this path as the file URL if needed:
+     /mnt/data/557a9e1c-ebae-425f-acf9-95aca66c0394.png
 -->
 </body>
 </html>
