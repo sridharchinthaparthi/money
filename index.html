@@ -403,7 +403,7 @@
       // ask user for a PIN (simple flow)
       let pin = null;
       while(true){
-        pin = prompt('Enter your 4-digit PIN (used to isolate your data). Example: 8008\nYou can change it later using "Switch PIN".');
+        pin = prompt('Enter your 4-digit PIN (used to isolate your data)');
         if(pin === null) {
           // user cancelled — if we already had a pin, keep it; otherwise abort
           if(currentPIN) return;
